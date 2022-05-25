@@ -269,16 +269,20 @@ densityHeatmap = function(data,
 }
 
 # https://stackoverflow.com/a/29853834/3425904
-ks_dist_pair = function(x, y) {
-	# if(length(x) > 5000) x = sample(x, 5000)
-	# if(length(y) > 5000) y = sample(y, 5000)
-	n <- length(x)
-    n.x <- as.double(n)
-    n.y <- length(y)
-    n <- n.x * n.y/(n.x + n.y)
-    w <- c(x, y)
-    z <- cumsum(ifelse(order(w) <= n.x, 1/n.x, -1/n.y))
-    max(abs(z))
+ks_dist_pair <- function(x, y) {
+  n <- length(x)
+  n.x <- as.double(n)
+  n.y <- length(y)
+  n <- n.x * n.y/(n.x + n.y)
+  w <- c(x, y)
+  z <- cumsum(ifelse(order(w) <= n.x, 1/n.x, -1/n.y))
+  max(abs(z))
+}
+
+get_pair_distance <- function(data, ind_mat, ind) {
+  i <- ind_mat[ind, 1]
+  j <- ind_mat[ind, 2]
+  return(suppressWarnings(ks_dist_pair(data[[i]], data[[j]])))
 }
 
 # data: a list or a matrix
@@ -294,22 +298,25 @@ ks_dist = function(data, cores = 1) {
 	ind_mat = expand.grid(seq_len(nc), seq_len(nc))
 	ind_mat = ind_mat[  ind_mat[, 1] > ind_mat[, 2], , drop = FALSE]
 	
-	# Ensures that .libPaths() in each cluster is the same as the main node
-	# Refer to: https://www.r-bloggers.com/2020/12/how-to-set-library-path-on-a-parallel-r-cluster/
-	e <- new.env()
-	e$libs <- .libPaths()
-	cl <- makeCluster(cores)
-	clusterExport(cl, "libs", env=e)
-	clusterEvalQ(cl, .libPaths(libs))
+  if (cores == 1) {
+    v <- lapply(seq_len(nrow(ind_mat)), function(ind) {
+      return(get_pair_distance(data, ind_mat, ind))
+    })
+  } else {
+    # Ensures that .libPaths() in each cluster is the same as the main node
+    # Refer to: https://www.r-bloggers.com/2020/12/how-to-set-library-path-on-a-parallel-r-cluster/
+    e <- new.env()
+    e$libs <- .libPaths()
+    cl <- makeCluster(cores, outfile="")
+    clusterExport(cl, "libs", env=e)
+    clusterEvalQ(cl, .libPaths(libs))
 
-	registerDoParallel(cl)
-	v <- foreach (ind = seq_len(nrow(ind_mat))) %dopar% {
-		i = ind_mat[ind, 1]
-		j = ind_mat[ind, 2]
-		suppressWarnings(d <- ks_dist_pair(data[[i]], data[[j]]))
-		return(d)
-	}
-	stopImplicitCluster()
+    registerDoParallel(cl)
+    v <- foreach (ind = seq_len(nrow(ind_mat))) %dopar% {
+      return(get_pair_distance(data, ind_mat, ind))
+    }
+    stopImplicitCluster()
+  }
 
 	v = unlist(v)
 
